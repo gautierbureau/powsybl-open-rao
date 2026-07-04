@@ -349,6 +349,13 @@ the fills that call them.
 
 ### Tier 4 — data-structure choices
 
+> **Status: implemented on this branch** — see commit "Optimize data structures
+> in solver wrapper, search tree and CRAC queries". The `CracImpl` indexes cover
+> CNECs-per-state and states-per-instant/contingency; remedial-action-per-state
+> queries were deliberately NOT indexed because usage rules are mutable after
+> registration (`addUsageRule` is public API), which would make such an index
+> unsound.
+
 - **`OpenRaoMPSolver.java:50-51`** — solver variables/constraints are kept in
   `TreeMap`s keyed by long concatenated ID strings: O(log n) full string
   comparisons on every one of the thousands of make/get calls per model build.

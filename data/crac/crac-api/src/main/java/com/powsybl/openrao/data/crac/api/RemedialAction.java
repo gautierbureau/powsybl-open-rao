@@ -77,6 +77,12 @@ public interface RemedialAction<I extends RemedialAction<I>> extends Identifiabl
     OnContingencyStateAdderToRemedialAction<I> newOnStateUsageRule();
 
     default boolean isAvailableForState(State state) {
-        return getUsageRules().stream().anyMatch(usageRule -> usageRule.isDefinedForState(state));
+        // plain loop rather than a stream: this method is called in the RAO's hot loops
+        for (UsageRule usageRule : getUsageRules()) {
+            if (usageRule.isDefinedForState(state)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
