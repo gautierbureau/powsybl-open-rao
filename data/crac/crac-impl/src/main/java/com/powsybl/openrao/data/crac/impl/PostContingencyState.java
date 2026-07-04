@@ -28,6 +28,8 @@ public class PostContingencyState implements State {
     private Contingency contingency;
     private Instant instant;
     private OffsetDateTime timestamp;
+    // states are used as hash-map keys in the RAO's hottest loops: cache the (immutable) hash
+    private final int hash;
 
     public PostContingencyState(Contingency contingency, Instant instant, OffsetDateTime timestamp) {
         if (instant.isPreventive()) {
@@ -37,6 +39,7 @@ public class PostContingencyState implements State {
         this.contingency = contingency;
         this.instant = instant;
         this.timestamp = timestamp;
+        this.hash = contingency.hashCode() * 19 + instant.hashCode();
     }
 
     public final String getId() {
@@ -95,7 +98,7 @@ public class PostContingencyState implements State {
 
     @Override
     public int hashCode() {
-        return contingency.hashCode() * 19 + instant.hashCode();
+        return hash;
     }
 
     @Override
