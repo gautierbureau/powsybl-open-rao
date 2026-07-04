@@ -265,6 +265,16 @@ the best effort-to-impact ratio in the codebase. *Risk: medium* (confirm
 network/`SensitivityComputer` isolation per timestamp; the initial-sensi path
 proves it exists).
 
+> **Status: implemented on this branch** — see commit "Parallelize MARMOT's
+> per-timestamp sensitivity analyses in the time-coupled MIP loop". The loop now
+> uses the same `MarmotUtils.smartMap(..., parallelism)` pattern as the other
+> per-timestamp sensitivity passes; in MARMOT each timestamp always uses a
+> `PreventiveOptimizationPerimeter` and reuses only its own `SensitivityComputer`,
+> so there is no cross-timestamp sharing. A new test
+> (`testWithRedispatchingAndGradientOnImplicatedGeneratorsMultiThreaded`) runs the
+> global MIP with 3 threads and asserts results identical to the single-threaded
+> run. When `parallelism == 1` the code path is byte-for-byte the sequential one.
+
 **1.2 The automaton simulator computes sensitivities for every curative range
 action during set-point shifts.**
 `AutomatonSimulator.java:247-255` builds its shift-loop analysis over auto *plus
