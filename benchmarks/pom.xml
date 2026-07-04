@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.powsybl.openrao.bench</groupId>
+    <artifactId>openrao-bench</artifactId>
+    <version>1.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <powsybl.core.version>7.3.0</powsybl.core.version>
+        <powsybl.olf.version>2.3.0</powsybl.olf.version>
+        <openrao.version>7.4.0-SNAPSHOT</openrao.version>
+        <jmh.version>1.37</jmh.version>
+    </properties>
+
+    <dependencies>
+        <!-- MATPOWER import -->
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>powsybl-matpower-converter</artifactId>
+            <version>${powsybl.core.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>powsybl-iidm-impl</artifactId>
+            <version>${powsybl.core.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>powsybl-iidm-serde</artifactId>
+            <version>${powsybl.core.version}</version>
+        </dependency>
+
+        <!-- Load flow + sensitivity providers -->
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>powsybl-open-loadflow</artifactId>
+            <version>${powsybl.olf.version}</version>
+        </dependency>
+
+        <!-- OpenRAO under test -->
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>open-rao-search-tree-rao</artifactId>
+            <version>${openrao.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>open-rao-crac-io-network</artifactId>
+            <version>${openrao.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>open-rao-sensitivity-analysis</artifactId>
+            <version>${openrao.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.powsybl</groupId>
+            <artifactId>open-rao-loopflow-computation</artifactId>
+            <version>${openrao.version}</version>
+        </dependency>
+
+        <!-- JMH -->
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <version>${jmh.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-generator-annprocess</artifactId>
+            <version>${jmh.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.13</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <finalName>bench</finalName>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.powsybl.openrao.bench.Main</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/BenchmarkList</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/CompilerHints</resource>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
