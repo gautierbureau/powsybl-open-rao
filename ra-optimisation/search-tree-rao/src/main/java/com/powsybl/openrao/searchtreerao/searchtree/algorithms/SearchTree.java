@@ -7,7 +7,6 @@
 
 package com.powsybl.openrao.searchtreerao.searchtree.algorithms;
 
-import com.google.common.hash.Hashing;
 import com.powsybl.commons.report.ReportNode;
 import com.powsybl.iidm.network.Network;
 import com.powsybl.openrao.commons.OpenRaoException;
@@ -33,7 +32,6 @@ import com.powsybl.openrao.searchtreerao.searchtree.parameters.SearchTreeParamet
 import com.powsybl.openrao.sensitivityanalysis.AppliedRemedialActions;
 import com.powsybl.openrao.util.AbstractNetworkPool;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -310,17 +308,17 @@ public class SearchTree {
         return null;
     }
 
-    int deterministicNetworkActionCombinationComparison(NetworkActionCombination ra1, NetworkActionCombination ra2) {
-        // 1. First priority given to combinations detected during RAO
-        // 2. Second priority given to pre-defined combinations
-        // 3. Third priority given to large combinations
-        // 4. Last priority is random but deterministic
-        Comparator<NetworkActionCombination> networkActionCombinationComparator =
-            Comparator.<NetworkActionCombination, NetworkActionCombination>comparing(ra -> ra, this::compareIsDetectedDuringRao)
-                .thenComparing(ra -> ra, this::compareIsPreDefined)
-                .thenComparing(ra -> ra, this::compareSize)
-                .thenComparingInt(ra -> Hashing.crc32().hashString(ra.getConcatenatedId(), StandardCharsets.UTF_8).asInt());
+    // 1. First priority given to combinations detected during RAO
+    // 2. Second priority given to pre-defined combinations
+    // 3. Third priority given to large combinations
+    // 4. Last priority is random but deterministic
+    private final Comparator<NetworkActionCombination> networkActionCombinationComparator =
+        Comparator.<NetworkActionCombination, NetworkActionCombination>comparing(ra -> ra, this::compareIsDetectedDuringRao)
+            .thenComparing(ra -> ra, this::compareIsPreDefined)
+            .thenComparing(ra -> ra, this::compareSize)
+            .thenComparingInt(NetworkActionCombination::getConcatenatedIdCrc32);
 
+    int deterministicNetworkActionCombinationComparison(NetworkActionCombination ra1, NetworkActionCombination ra2) {
         return networkActionCombinationComparator.compare(ra1, ra2);
     }
 

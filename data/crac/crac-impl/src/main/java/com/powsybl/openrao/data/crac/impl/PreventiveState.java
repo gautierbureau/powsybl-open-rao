@@ -23,6 +23,8 @@ public class PreventiveState implements State {
     private final Instant instant;
     private final OffsetDateTime timestamp;
     private final String id;
+    // states are used as hash-map keys in the RAO's hottest loops: cache the (immutable) hash
+    private final int hash;
 
     PreventiveState(Instant instant, OffsetDateTime timestamp) {
         if (!instant.isPreventive()) {
@@ -31,6 +33,7 @@ public class PreventiveState implements State {
         this.instant = instant;
         this.timestamp = timestamp;
         this.id = StateIdHelper.getStateId(instant, timestamp);
+        this.hash = id.hashCode();
     }
 
     @Override
@@ -63,7 +66,7 @@ public class PreventiveState implements State {
 
     @Override
     public int hashCode() {
-        return getId().hashCode();
+        return hash;
     }
 
     @Override

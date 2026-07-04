@@ -7,9 +7,11 @@
 
 package com.powsybl.openrao.searchtreerao.commons;
 
+import com.google.common.hash.Hashing;
 import com.powsybl.openrao.data.crac.api.Identifiable;
 import com.powsybl.openrao.data.crac.api.networkaction.NetworkAction;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
@@ -22,6 +24,9 @@ public class NetworkActionCombination {
 
     private final Set<NetworkAction> networkActionSet;
     private final boolean detectedDuringRao;
+    // used repeatedly when sorting combinations: computed lazily then cached (benign race: recomputing yields the same value)
+    private String concatenatedId;
+    private Integer concatenatedIdCrc32;
 
     public NetworkActionCombination(Set<NetworkAction> networkActionSet, boolean detectedDuringRao) {
         this.networkActionSet = networkActionSet;
@@ -48,9 +53,23 @@ public class NetworkActionCombination {
     }
 
     public String getConcatenatedId() {
-        return networkActionSet.stream()
-            .map(Identifiable::getId)
-            .collect(Collectors.joining(" + "));
+        String id = concatenatedId;
+        if (id == null) {
+            id = networkActionSet.stream()
+                .map(Identifiable::getId)
+                .collect(Collectors.joining(" + "));
+            concatenatedId = id;
+        }
+        return id;
+    }
+
+    public int getConcatenatedIdCrc32() {
+        Integer crc32 = concatenatedIdCrc32;
+        if (crc32 == null) {
+            crc32 = Hashing.crc32().hashString(getConcatenatedId(), StandardCharsets.UTF_8).asInt();
+            concatenatedIdCrc32 = crc32;
+        }
+        return crc32;
     }
 
     public boolean isDetectedDuringRao() {

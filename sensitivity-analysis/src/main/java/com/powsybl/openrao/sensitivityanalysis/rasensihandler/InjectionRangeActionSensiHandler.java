@@ -30,21 +30,30 @@ public class InjectionRangeActionSensiHandler implements RangeActionSensiHandler
     private static final String POSITIVE_GLSK_SUFFIX = "-positiveInjections";
     private static final String NEGATIVE_GLSK_SUFFIX = "-negativeInjections";
     private final InjectionRangeAction injectionRangeAction;
+    // the injection distribution keys are immutable: pre-compute the GLSK ids and key sums used on every sensitivity query
+    private final String positiveGlskMapId;
+    private final String negativeGlskMapId;
+    private final double positiveGlskMapKeySum;
+    private final double negativeGlskMapKeySum;
 
     public InjectionRangeActionSensiHandler(InjectionRangeAction injectionRangeAction) {
         this.injectionRangeAction = injectionRangeAction;
+        this.positiveGlskMapId = injectionRangeAction.getId() + POSITIVE_GLSK_SUFFIX;
+        this.negativeGlskMapId = injectionRangeAction.getId() + NEGATIVE_GLSK_SUFFIX;
+        this.positiveGlskMapKeySum = getKeySum(getPositiveGlskMap());
+        this.negativeGlskMapKeySum = getKeySum(getNegativeGlskMap());
     }
 
     @Override
     public double getSensitivityOnFlow(FlowCnec cnec, TwoSides side, SystematicSensitivityResult sensitivityResult) {
-        return sensitivityResult.getSensitivityOnFlow(getPositiveGlskMapId(), cnec, side) * getKeySum(getPositiveGlskMap())
-                - sensitivityResult.getSensitivityOnFlow(getNegativeGlskMapId(), cnec, side) * getKeySum(getNegativeGlskMap());
+        return sensitivityResult.getSensitivityOnFlow(positiveGlskMapId, cnec, side) * positiveGlskMapKeySum
+                - sensitivityResult.getSensitivityOnFlow(negativeGlskMapId, cnec, side) * negativeGlskMapKeySum;
     }
 
     @Override
     public double getSensitivityOnIntensity(FlowCnec cnec, TwoSides side, SystematicSensitivityResult sensitivityResult) {
-        return sensitivityResult.getSensitivityOnIntensity(getPositiveGlskMapId(), cnec, side) * getKeySum(getPositiveGlskMap())
-            - sensitivityResult.getSensitivityOnIntensity(getNegativeGlskMapId(), cnec, side) * getKeySum(getNegativeGlskMap());
+        return sensitivityResult.getSensitivityOnIntensity(positiveGlskMapId, cnec, side) * positiveGlskMapKeySum
+            - sensitivityResult.getSensitivityOnIntensity(negativeGlskMapId, cnec, side) * negativeGlskMapKeySum;
     }
 
     @Override
@@ -84,10 +93,10 @@ public class InjectionRangeActionSensiHandler implements RangeActionSensiHandler
     }
 
     public String getPositiveGlskMapId() {
-        return injectionRangeAction.getId() + POSITIVE_GLSK_SUFFIX;
+        return positiveGlskMapId;
     }
 
     public String getNegativeGlskMapId() {
-        return injectionRangeAction.getId() + NEGATIVE_GLSK_SUFFIX;
+        return negativeGlskMapId;
     }
 }
