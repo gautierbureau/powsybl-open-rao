@@ -311,6 +311,9 @@ preserved.
 
 ### Tier 3 — micro-inefficiencies in the hottest call chain
 
+> **Status: implemented on this branch** — see commit "Optimize hot call chain
+> from problem fillers to sensitivity results".
+
 The verified hot chain is `AbstractCoreProblemFiller.buildFlowConstraints`
 (`fillers/AbstractCoreProblemFiller.java:166-209`) → `getSensitivityValue` →
 `SystematicSensitivityResult`, called on the order of CNECs × sides × range

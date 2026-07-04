@@ -82,6 +82,11 @@ public class SystematicSensitivityResult {
     private final Map<Integer, Map<String, StateResult>> postContingencyResults = new HashMap<>();
 
     private final Map<Cnec<?>, StateResult> memoizedStateResultPerCnec = new ConcurrentHashMap<>();
+    private final Map<CnecInstantKey, Optional<StateResult>> memoizedStateResultPerCnecAndInstant = new ConcurrentHashMap<>();
+    private final Map<RangeAction<?>, RangeActionSensiHandler> memoizedSensiHandlerPerRangeAction = new ConcurrentHashMap<>();
+
+    private record CnecInstantKey(Cnec<?> cnec, Instant instant) {
+    }
 
     public SystematicSensitivityResult() {
         this.status = SensitivityComputationStatus.SUCCESS;
@@ -92,6 +97,9 @@ public class SystematicSensitivityResult {
     }
 
     public SystematicSensitivityResult completeData(SensitivityAnalysisResult results, Integer instantOrder) {
+        // state results may change with the new data: invalidate resolution caches
+        memoizedStateResultPerCnec.clear();
+        memoizedStateResultPerCnecAndInstant.clear();
         postContingencyResults.putIfAbsent(instantOrder, new HashMap<>());
         // if a failing perimeter was already run, then the status would be set to PARTIAL_FAILURE
         // This boolean will be reused to set the global status to PARITAL_FAILURE if required
@@ -255,10 +263,12 @@ public class SystematicSensitivityResult {
                 .filter(instantOrder -> instantOrder <= state.getInstant().getOrder())
                 .sorted(Comparator.reverseOrder())
                 .toList();
+            String contingencyId = optionalContingency.get().getId();
             for (Integer instantOrder : possibleInstants) {
                 // Use latest sensi computed on state
-                if (postContingencyResults.get(instantOrder).containsKey(optionalContingency.get().getId())) {
-                    return postContingencyResults.get(instantOrder).get(optionalContingency.get().getId()).getSensitivityComputationStatus();
+                StateResult stateResult = postContingencyResults.get(instantOrder).get(contingencyId);
+                if (stateResult != null) {
+                    return stateResult.getSensitivityComputationStatus();
                 }
             }
             return SensitivityComputationStatus.FAILURE;
@@ -277,61 +287,39 @@ public class SystematicSensitivityResult {
 
     public double getReferenceFlow(FlowCnec cnec, TwoSides side) {
         StateResult stateResult = getCnecStateResult(cnec);
-        if (stateResult == null ||
-            !stateResult.getReferenceFlows().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getReferenceFlows().get(cnec.getNetworkElement().getId()).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getReferenceFlows().get(cnec.getNetworkElement().getId()).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getReferenceFlows(), cnec.getNetworkElement().getId(), side);
     }
 
     public double getReferenceFlow(FlowCnec cnec, TwoSides side, Instant instant) {
         StateResult stateResult = getCnecStateResult(cnec, instant);
-        if (stateResult == null ||
-            !stateResult.getReferenceFlows().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getReferenceFlows().get(cnec.getNetworkElement().getId()).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getReferenceFlows().get(cnec.getNetworkElement().getId()).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getReferenceFlows(), cnec.getNetworkElement().getId(), side);
     }
 
     public double getReferenceIntensity(FlowCnec cnec, TwoSides side) {
         StateResult stateResult = getCnecStateResult(cnec);
-        if (stateResult == null ||
-            !stateResult.getReferenceIntensities().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getReferenceIntensities().get(cnec.getNetworkElement().getId()).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getReferenceIntensities().get(cnec.getNetworkElement().getId()).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getReferenceIntensities(), cnec.getNetworkElement().getId(), side);
     }
 
     public double getReferenceIntensity(FlowCnec cnec, TwoSides side, Instant instant) {
         StateResult stateResult = getCnecStateResult(cnec, instant);
-        if (stateResult == null ||
-            !stateResult.getReferenceIntensities().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getReferenceIntensities().get(cnec.getNetworkElement().getId()).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getReferenceIntensities().get(cnec.getNetworkElement().getId()).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getReferenceIntensities(), cnec.getNetworkElement().getId(), side);
     }
 
     public double getSensitivityOnFlow(RangeAction<?> rangeAction, FlowCnec cnec, TwoSides side) {
-        return RangeActionSensiHandler.get(rangeAction).getSensitivityOnFlow(cnec, side, this);
+        return getSensiHandler(rangeAction).getSensitivityOnFlow(cnec, side, this);
     }
 
     public double getSensitivityOnIntensity(RangeAction<?> rangeAction, FlowCnec cnec, TwoSides side) {
-        return RangeActionSensiHandler.get(rangeAction).getSensitivityOnIntensity(cnec, side, this);
+        return getSensiHandler(rangeAction).getSensitivityOnIntensity(cnec, side, this);
+    }
+
+    private RangeActionSensiHandler getSensiHandler(RangeAction<?> rangeAction) {
+        return memoizedSensiHandlerPerRangeAction.computeIfAbsent(rangeAction, RangeActionSensiHandler::get);
     }
 
     public double getSensitivityOnIntensity(String variableId, FlowCnec cnec, TwoSides side) {
         StateResult stateResult = getCnecStateResult(cnec);
-        if (stateResult == null ||
-            !stateResult.getIntensitySensitivities().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getIntensitySensitivities().get(cnec.getNetworkElement().getId()).containsKey(variableId) ||
-            !stateResult.getIntensitySensitivities().get(cnec.getNetworkElement().getId()).get(variableId).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getIntensitySensitivities().get(cnec.getNetworkElement().getId()).get(variableId).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getIntensitySensitivities(), cnec.getNetworkElement().getId(), variableId, side);
     }
 
     public double getSensitivityOnIntensity(SensitivityVariableSet glsk, FlowCnec cnec, TwoSides side) {
@@ -344,29 +332,40 @@ public class SystematicSensitivityResult {
 
     public double getSensitivityOnFlow(String variableId, FlowCnec cnec, TwoSides side) {
         StateResult stateResult = getCnecStateResult(cnec);
-        if (stateResult == null ||
-            !stateResult.getFlowSensitivities().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).containsKey(variableId) ||
-            !stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).get(variableId).containsKey(side)) {
-            return 0.0;
-        }
-        return stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).get(variableId).get(side);
+        return stateResult == null ? 0.0 : getValue(stateResult.getFlowSensitivities(), cnec.getNetworkElement().getId(), variableId, side);
     }
 
     public double getSensitivityOnFlow(String variableId, FlowCnec cnec, TwoSides side, Instant instant) {
         StateResult stateResult = getCnecStateResult(cnec, instant);
-        if (stateResult == null ||
-            !stateResult.getFlowSensitivities().containsKey(cnec.getNetworkElement().getId()) ||
-            !stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).containsKey(variableId) ||
-            !stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).get(variableId).containsKey(side)) {
+        return stateResult == null ? 0.0 : getValue(stateResult.getFlowSensitivities(), cnec.getNetworkElement().getId(), variableId, side);
+    }
+
+    private static double getValue(Map<String, Map<TwoSides, Double>> valuesPerNetworkElement, String networkElementId, TwoSides side) {
+        Map<TwoSides, Double> valuesPerSide = valuesPerNetworkElement.get(networkElementId);
+        if (valuesPerSide == null) {
             return 0.0;
         }
-        return stateResult.getFlowSensitivities().get(cnec.getNetworkElement().getId()).get(variableId).get(side);
+        Double value = valuesPerSide.get(side);
+        return value == null ? 0.0 : value;
+    }
+
+    private static double getValue(Map<String, Map<String, Map<TwoSides, Double>>> sensitivitiesPerNetworkElement, String networkElementId, String variableId, TwoSides side) {
+        Map<String, Map<TwoSides, Double>> sensitivitiesPerVariable = sensitivitiesPerNetworkElement.get(networkElementId);
+        if (sensitivitiesPerVariable == null) {
+            return 0.0;
+        }
+        Map<TwoSides, Double> sensitivitiesPerSide = sensitivitiesPerVariable.get(variableId);
+        if (sensitivitiesPerSide == null) {
+            return 0.0;
+        }
+        Double sensitivity = sensitivitiesPerSide.get(side);
+        return sensitivity == null ? 0.0 : sensitivity;
     }
 
     private StateResult getCnecStateResult(Cnec<?> cnec) {
-        if (memoizedStateResultPerCnec.containsKey(cnec)) {
-            return memoizedStateResultPerCnec.get(cnec);
+        StateResult memoizedStateResult = memoizedStateResultPerCnec.get(cnec);
+        if (memoizedStateResult != null) {
+            return memoizedStateResult;
         }
         Optional<Contingency> optionalContingency = cnec.getState().getContingency();
         if (optionalContingency.isPresent()) {
@@ -374,12 +373,13 @@ public class SystematicSensitivityResult {
                 .filter(instantOrder -> instantOrder <= cnec.getState().getInstant().getOrder())
                 .sorted(Comparator.reverseOrder())
                 .toList();
+            String contingencyId = optionalContingency.get().getId();
             for (Integer instantOrder : possibleInstants) {
                 // Use latest sensi computed on the cnec's contingency amidst the last instants before cnec state.
-                String contingencyId = optionalContingency.get().getId();
-                if (postContingencyResults.get(instantOrder).containsKey(contingencyId)) {
-                    memoizedStateResultPerCnec.put(cnec, postContingencyResults.get(instantOrder).get(contingencyId));
-                    return memoizedStateResultPerCnec.get(cnec);
+                StateResult stateResult = postContingencyResults.get(instantOrder).get(contingencyId);
+                if (stateResult != null) {
+                    memoizedStateResultPerCnec.put(cnec, stateResult);
+                    return stateResult;
                 }
             }
             return null;
@@ -389,6 +389,12 @@ public class SystematicSensitivityResult {
     }
 
     private StateResult getCnecStateResult(Cnec<?> cnec, Instant instant) {
+        return memoizedStateResultPerCnecAndInstant
+            .computeIfAbsent(new CnecInstantKey(cnec, instant), key -> Optional.ofNullable(computeCnecStateResult(key.cnec(), key.instant())))
+            .orElse(null);
+    }
+
+    private StateResult computeCnecStateResult(Cnec<?> cnec, Instant instant) {
         Optional<Contingency> optionalContingency = cnec.getState().getContingency();
         if (optionalContingency.isPresent()) {
             String contingencyId = optionalContingency.get().getId();

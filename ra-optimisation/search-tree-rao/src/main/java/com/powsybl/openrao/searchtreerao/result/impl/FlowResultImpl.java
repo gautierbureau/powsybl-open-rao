@@ -104,10 +104,13 @@ public class FlowResultImpl implements FlowResult {
         if (fixedCommercialFlows != null) {
             return fixedCommercialFlows.getCommercialFlow(flowCnec, side, unit);
         } else {
-            if (!commercialFlows.containsKey(flowCnec) || !commercialFlows.get(flowCnec).containsKey(side) || !commercialFlows.get(flowCnec).get(side).containsKey(unit)) {
+            Map<TwoSides, Map<Unit, Double>> commercialFlowsPerSide = commercialFlows.get(flowCnec);
+            Map<Unit, Double> commercialFlowsPerUnit = commercialFlowsPerSide == null ? null : commercialFlowsPerSide.get(side);
+            Double commercialFlow = commercialFlowsPerUnit == null ? null : commercialFlowsPerUnit.get(unit);
+            if (commercialFlow == null) {
                 throw new OpenRaoException(format("No commercial flow on the CNEC %s on side %s in %s", flowCnec.getName(), side, unit));
             }
-            return commercialFlows.get(flowCnec).get(side).get(unit);
+            return commercialFlow;
         }
     }
 
@@ -116,10 +119,12 @@ public class FlowResultImpl implements FlowResult {
         if (fixedPtdfZonalSums != null) {
             return fixedPtdfZonalSums.getPtdfZonalSum(flowCnec, side);
         } else {
-            if (!ptdfZonalSums.containsKey(flowCnec) || !ptdfZonalSums.get(flowCnec).containsKey(side)) {
+            Map<TwoSides, Double> ptdfZonalSumsPerSide = ptdfZonalSums.get(flowCnec);
+            Double ptdfZonalSum = ptdfZonalSumsPerSide == null ? null : ptdfZonalSumsPerSide.get(side);
+            if (ptdfZonalSum == null) {
                 throw new OpenRaoException(format("No PTDF computed on the CNEC %s on side %s", flowCnec.getName(), side));
             }
-            return ptdfZonalSums.get(flowCnec).get(side);
+            return ptdfZonalSum;
         }
     }
 
@@ -162,8 +167,9 @@ public class FlowResultImpl implements FlowResult {
     }
 
     private double checkMarginMapAndGet(FlowCnec flowCnec, Unit unit, Map<FlowCnec, Double> marginMap) {
-        if (marginMap.containsKey(flowCnec)) {
-            return marginMap.get(flowCnec);
+        Double memoizedMargin = marginMap.get(flowCnec);
+        if (memoizedMargin != null) {
+            return memoizedMargin;
         }
         double margin = flowCnec.getMonitoredSides().stream()
             .map(side -> getMargin(flowCnec, side, unit))
