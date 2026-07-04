@@ -30,6 +30,11 @@ public final class Main {
             return;
         }
 
+        if ("castor".equals(mode)) {
+            EndToEnd.runCastor(args);
+            return;
+        }
+
         Path dir = Path.of("cases");
         Path mFile = dir.resolve("case13659pegase.m");
         Path matFile = dir.resolve("case13659pegase.mat");

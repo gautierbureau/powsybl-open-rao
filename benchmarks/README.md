@@ -44,6 +44,35 @@ Run the JMH micro-benchmarks:
 java -Xmx4g -jar target/bench.jar jmh -rf text -rff jmh-results.txt ".*Benchmark.*"
 ```
 
+Run an end-to-end CASTOR RAO on PEGASE (requires the XIIDM cache from `prepare`):
+```
+java -Xmx8g -jar target/bench.jar castor [nContingencies] [nMonitored] [nRedispatch]
+```
+The three optional knobs size the synthesized CRAC; the defaults (`40 800 70`) land at ~1 min.
+
+## End-to-end runs (tractable in 1-2 min)
+
+`castor` synthesizes a bounded CRAC on the 13 659-bus PEGASE network and runs one full CASTOR RAO.
+Because MATPOWER branches carry no operational limits and its phase-shifters are single-step, the
+harness adds synthetic active-power limits (just below the DC flow, so CNECs are genuinely binding)
+and uses **redispatching (injection) range actions** on generators rather than PSTs.
+
+Runtime is driven by `#CNECs x #range-actions` and the number of contingency perimeters. Measured:
+
+| Knobs (N contingencies, M monitored, R redispatch) | FlowCNECs | Injection RAs | RAO time |
+|---|---:|---:|---:|
+| 10, 200, 20 | 4 200 | 20 | ~5 s |
+| **40, 800, 70** (default) | **64 800** | **70** | **~62 s** |
+| 50, 1000, 100 | 101 000 | 100 | ~197 s |
+
+**Interpreting the end-to-end number.** This run exercises the optimized paths at scale (the
+sensitivity getters, the LP variable/constraint maps, and `CracImpl` per-state queries), but a full
+RAO's wall-clock is dominated by the OpenLoadFlow sensitivity *solve* — which the Tier 3/4 changes do
+not touch. So the end-to-end delta from those changes sits within solver variance; the **JMH
+micro-benchmarks above are the precise measurement** of their effect. The end-to-end run is the
+right place to measure the **MARMOT parallelization** (Tier 1.1), whose speedup is multiplicative in
+timestamps x cores — a `marmot` A/B (parallelism 1 vs N) is the recommended next addition.
+
 ## What the micro-benchmarks measure
 
 Each benchmark reproduces the exact changed code path old-vs-new, side by side, at a scale derived
