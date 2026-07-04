@@ -20,6 +20,7 @@ import com.powsybl.openrao.searchtreerao.searchtree.parameters.SearchTreeParamet
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +32,8 @@ import java.util.stream.Collectors;
  */
 public final class SearchTreeBloomer {
     private final List<NetworkActionCombination> preDefinedNaCombinations;
+    // set view of preDefinedNaCombinations, for constant-time membership tests in the combination comparator
+    private final Set<NetworkActionCombination> preDefinedNaCombinationsSet;
     private final List<NetworkActionCombinationFilter> networkActionCombinationFilters;
     private final SearchTreeInput input;
     private final SearchTreeParameters parameters;
@@ -38,6 +41,7 @@ public final class SearchTreeBloomer {
     public SearchTreeBloomer(SearchTreeInput input, SearchTreeParameters parameters) {
         RaUsageLimits raUsageLimits = parameters.getRaLimitationParameters().getOrDefault(input.getOptimizationPerimeter().getMainOptimizationState().getInstant(), new RaUsageLimits());
         this.preDefinedNaCombinations = parameters.getNetworkActionParameters().getNetworkActionCombinations();
+        this.preDefinedNaCombinationsSet = new HashSet<>(preDefinedNaCombinations);
         this.networkActionCombinationFilters = new ArrayList<>(List.of(
             new AlreadyAppliedNetworkActionsFilter(),
             new AlreadyTestedCombinationsFilter(preDefinedNaCombinations),
@@ -144,7 +148,7 @@ public final class SearchTreeBloomer {
     }
 
     boolean hasPreDefinedNetworkActionCombination(NetworkActionCombination naCombination) {
-        return this.preDefinedNaCombinations.contains(naCombination);
+        return this.preDefinedNaCombinationsSet.contains(naCombination);
     }
 
     Map<String, Integer> getNumberOfPstTapsMovedByTso(OptimizationResult optimizationResult) {

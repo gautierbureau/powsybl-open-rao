@@ -25,6 +25,7 @@ import com.powsybl.sensitivity.SensitivityAnalysisParameters;
 import com.powsybl.sensitivity.SensitivityVariableSet;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -71,19 +72,24 @@ public class LoopFlowComputationImpl implements LoopFlowComputation {
     public LoopFlowResult buildLoopFlowsFromReferenceFlowAndPtdf(SystematicSensitivityResult alreadyCalculatedPtdfAndFlows, Set<FlowCnec> flowCnecs, Network network) {
         LoopFlowResult results = new LoopFlowResult();
         Map<SensitivityVariableSet, Boolean> isInMainComponentMap = computeIsInMainComponentMap(network);
+        // the GLSKs in main component and their net positions do not depend on the CNEC: compute them only once
+        List<GlskWithNetPosition> glsksInMainComponent = getGlskStream()
+            .filter(entry -> isInMainComponentMap.get(entry.getValue()))
+            .map(entry -> new GlskWithNetPosition(entry.getValue(), referenceProgram.getGlobalNetPosition(entry.getKey())))
+            .toList();
         for (FlowCnec flowCnec : flowCnecs) {
             flowCnec.getMonitoredSides().forEach(side -> {
                 double refFlow = 0;
                 double commercialFLow = 0;
                 if (flowUnit == Unit.MEGAWATT) {
                     refFlow = alreadyCalculatedPtdfAndFlows.getReferenceFlow(flowCnec, side);
-                    commercialFLow = getGlskStream().filter(entry -> isInMainComponentMap.get(entry.getValue()))
-                        .mapToDouble(entry -> alreadyCalculatedPtdfAndFlows.getSensitivityOnFlow(entry.getValue(), flowCnec, side) * referenceProgram.getGlobalNetPosition(entry.getKey()))
+                    commercialFLow = glsksInMainComponent.stream()
+                        .mapToDouble(entry -> alreadyCalculatedPtdfAndFlows.getSensitivityOnFlow(entry.glsk(), flowCnec, side) * entry.netPosition())
                         .sum();
                 } else if (flowUnit == Unit.AMPERE) {
                     refFlow = alreadyCalculatedPtdfAndFlows.getReferenceIntensity(flowCnec, side);
-                    commercialFLow = getGlskStream().filter(entry -> isInMainComponentMap.get(entry.getValue()))
-                        .mapToDouble(entry -> alreadyCalculatedPtdfAndFlows.getSensitivityOnIntensity(entry.getValue(), flowCnec, side) * referenceProgram.getGlobalNetPosition(entry.getKey()))
+                    commercialFLow = glsksInMainComponent.stream()
+                        .mapToDouble(entry -> alreadyCalculatedPtdfAndFlows.getSensitivityOnIntensity(entry.glsk(), flowCnec, side) * entry.netPosition())
                         .sum();
                 }
 
@@ -91,6 +97,9 @@ public class LoopFlowComputationImpl implements LoopFlowComputation {
             });
         }
         return results;
+    }
+
+    private record GlskWithNetPosition(SensitivityVariableSet glsk, double netPosition) {
     }
 
     private Map<SensitivityVariableSet, Boolean> computeIsInMainComponentMap(Network network) {

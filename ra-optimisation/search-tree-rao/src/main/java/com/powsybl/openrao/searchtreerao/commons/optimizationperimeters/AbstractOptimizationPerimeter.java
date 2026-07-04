@@ -45,6 +45,8 @@ public abstract class AbstractOptimizationPerimeter implements OptimizationPerim
     private final Set<FlowCnec> loopFlowCnecs;
     private final Set<NetworkAction> availableNetworkActions;
     private final Map<State, Set<RangeAction<?>>> availableRangeActions;
+    // flattened union of availableRangeActions' values, invariant for the perimeter's lifetime
+    private final Set<RangeAction<?>> allAvailableRangeActions;
     private static final double EPSILON = 1e-6;
 
     protected AbstractOptimizationPerimeter(State mainOptimizationState,
@@ -77,6 +79,10 @@ public abstract class AbstractOptimizationPerimeter implements OptimizationPerim
             rangeActionSet.addAll(availableRangeActions.get(state));
             this.availableRangeActions.put(state, rangeActionSet);
         });
+
+        Set<RangeAction<?>> rangeActionsUnion = new TreeSet<>(Comparator.comparing(Identifiable::getId));
+        this.availableRangeActions.values().forEach(rangeActionsUnion::addAll);
+        this.allAvailableRangeActions = Collections.unmodifiableSet(rangeActionsUnion);
     }
 
     @Override
@@ -126,7 +132,7 @@ public abstract class AbstractOptimizationPerimeter implements OptimizationPerim
 
     @Override
     public Set<RangeAction<?>> getRangeActions() {
-        return availableRangeActions.values().stream().flatMap(Collection::stream).collect(Collectors.toSet());
+        return allAvailableRangeActions;
     }
 
     public Set<RangeAction<?>> getRangeActionsWithoutHvdcInAcEmulation(Network network) {
