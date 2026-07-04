@@ -1,0 +1,6 @@
+target/
+cases/
+*.txt
+*.text
+jmh-result*
+dependency-reduced-pom.xml
