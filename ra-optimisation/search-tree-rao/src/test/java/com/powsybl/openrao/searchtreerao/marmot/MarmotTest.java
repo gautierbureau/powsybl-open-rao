@@ -25,6 +25,7 @@ import com.powsybl.openrao.raoapi.RaoInput;
 import com.powsybl.openrao.raoapi.TimeCoupledRaoInput;
 import com.powsybl.openrao.raoapi.json.JsonRaoParameters;
 import com.powsybl.openrao.raoapi.parameters.RaoParameters;
+import com.powsybl.openrao.raoapi.parameters.extensions.MarmotParameters;
 import com.powsybl.openrao.searchtreerao.marmot.results.TimeCoupledRaoResultImpl;
 import com.powsybl.openrao.searchtreerao.marmot.results.extensions.PreTimeCouplingOverloadedCnecs;
 import org.junit.jupiter.api.Test;
@@ -258,6 +259,63 @@ class MarmotTest {
         // due to the max gradient of 200. Not activating 530 MW in timestamps 2 and 3 will create an overload and be very costly.
         // redispatching of 530 MW in both timestamps 2 & 3 with a cost of 26510 each
         // MARMOT should also activate redispatching at 530 MW for second and third timestamps
+        TimeCoupledRaoResult results = new Marmot().run(input, raoParameters, ReportNode.NO_OP).join();
+        assertEquals(330.0, results.getOptimizedSetPointOnState(crac1.getPreventiveState(), crac1.getRangeAction("redispatchingAction")));
+        assertEquals(530.0, results.getOptimizedSetPointOnState(crac2.getPreventiveState(), crac2.getRangeAction("redispatchingAction")));
+        assertEquals(530.0, results.getOptimizedSetPointOnState(crac3.getPreventiveState(), crac3.getRangeAction("redispatchingAction")));
+
+        assertEquals(69530., results.getGlobalCost(crac1.getLastInstant()));
+        assertEquals(16510., results.getCost(crac1.getLastInstant(), timestamp1));
+        assertEquals(26510, results.getCost(crac2.getLastInstant(), timestamp2));
+        assertEquals(26510, results.getCost(crac3.getLastInstant(), timestamp3));
+
+        // Clean created networks
+        cleanExistingNetwork(getResourcesPath().concat(networkFilePathPostIcsImport));
+    }
+
+    @Test
+    void testWithRedispatchingAndGradientOnImplicatedGeneratorsMultiThreaded() throws IOException {
+        // Same scenario as testWithRedispatchingAndGradientOnImplicatedGenerators, but run with several threads: the
+        // per-timestamp sensitivity analyses of the global time-coupled MIP are computed in parallel and must yield
+        // the exact same result as the single-threaded run.
+        String networkRelativePath = "/network/3Nodes.uct";
+        String networkAbsolutePath = getResourcesPath().concat(networkRelativePath);
+        Network network = Network.read(networkRelativePath, MarmotTest.class.getResourceAsStream(networkRelativePath));
+
+        // Create postIcsNetwork:
+        String networkFilePathPostIcsImport = networkRelativePath.split(".uct")[0].concat("_modified.jiidm");
+        network.write("JIIDM", new Properties(), Path.of(getResourcesPath().concat(networkFilePathPostIcsImport)));
+
+        Crac crac1 = Crac.read("/crac/crac-redispatching-202502141040.json", MarmotTest.class.getResourceAsStream("/crac/crac-redispatching-202502141040.json"), network);
+        Crac crac2 = Crac.read("/crac/crac-redispatching-202502141140.json", MarmotTest.class.getResourceAsStream("/crac/crac-redispatching-202502141140.json"), network);
+        Crac crac3 = Crac.read("/crac/crac-redispatching-202502141240.json", MarmotTest.class.getResourceAsStream("/crac/crac-redispatching-202502141240.json"), network);
+        RaoParameters raoParameters = JsonRaoParameters.read(MarmotTest.class.getResourceAsStream("/parameters/RaoParameters_minCost_megawatt_dc.json"), ReportNode.NO_OP);
+
+        MarmotParameters marmotParameters = new MarmotParameters();
+        marmotParameters.setNumberOfThreads(3);
+        raoParameters.addExtension(MarmotParameters.class, marmotParameters);
+
+        OffsetDateTime timestamp1 = OffsetDateTime.of(2025, 2, 14, 10, 40, 0, 0, ZoneOffset.UTC);
+        OffsetDateTime timestamp2 = OffsetDateTime.of(2025, 2, 14, 11, 40, 0, 0, ZoneOffset.UTC);
+        OffsetDateTime timestamp3 = OffsetDateTime.of(2025, 2, 14, 12, 40, 0, 0, ZoneOffset.UTC);
+
+        TimeCoupledConstraints timeCoupledConstraints = new TimeCoupledConstraints();
+        timeCoupledConstraints.addGeneratorConstraints(
+            GeneratorConstraints.create()
+                .withGeneratorId("FFR3AA1 _generator")
+                .withLeadTime(0.0).withLagTime(0.0)
+                .withUpwardPowerGradient(200.0).withDownwardPowerGradient(0.0)
+                .build()
+        );
+
+        TimeCoupledRaoInput input = new TimeCoupledRaoInput(
+            new TemporalDataImpl<>(Map.of(
+                timestamp1, RaoInput.build(LazyNetwork.of(networkAbsolutePath), crac1).build(),
+                timestamp2, RaoInput.build(LazyNetwork.of(networkAbsolutePath), crac2).build(),
+                timestamp3, RaoInput.build(LazyNetwork.of(networkAbsolutePath), crac3).build())),
+            timeCoupledConstraints
+        );
+
         TimeCoupledRaoResult results = new Marmot().run(input, raoParameters, ReportNode.NO_OP).join();
         assertEquals(330.0, results.getOptimizedSetPointOnState(crac1.getPreventiveState(), crac1.getRangeAction("redispatchingAction")));
         assertEquals(530.0, results.getOptimizedSetPointOnState(crac2.getPreventiveState(), crac2.getRangeAction("redispatchingAction")));
