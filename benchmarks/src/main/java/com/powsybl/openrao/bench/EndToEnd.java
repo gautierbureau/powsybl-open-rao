@@ -19,19 +19,34 @@ import com.powsybl.openrao.data.crac.api.parameters.CracCreationParameters;
 import com.powsybl.openrao.data.crac.io.network.NetworkCracCreationContext;
 import com.powsybl.openrao.data.crac.io.network.NetworkCracCreator;
 import com.powsybl.openrao.data.crac.io.network.parameters.CriticalElements;
+import com.powsybl.openrao.commons.TemporalData;
+import com.powsybl.openrao.commons.TemporalDataImpl;
+import com.powsybl.openrao.data.crac.io.network.parameters.InjectionRangeActionCosts;
 import com.powsybl.openrao.data.crac.io.network.parameters.MinAndMax;
 import com.powsybl.openrao.data.crac.io.network.parameters.NetworkCracCreationParameters;
 import com.powsybl.openrao.data.raoresult.api.RaoResult;
+import com.powsybl.openrao.data.raoresult.api.TimeCoupledRaoResult;
+import com.powsybl.openrao.data.timecoupledconstraints.GeneratorConstraints;
+import com.powsybl.openrao.data.timecoupledconstraints.TimeCoupledConstraints;
+import com.powsybl.openrao.raoapi.LazyNetwork;
 import com.powsybl.openrao.raoapi.Rao;
 import com.powsybl.openrao.raoapi.RaoInput;
+import com.powsybl.openrao.raoapi.TimeCoupledRaoInput;
 import com.powsybl.openrao.raoapi.json.JsonRaoParameters;
 import com.powsybl.openrao.raoapi.parameters.RaoParameters;
+import com.powsybl.openrao.raoapi.parameters.extensions.MarmotParameters;
+import com.powsybl.openrao.searchtreerao.marmot.Marmot;
 
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 /**
@@ -99,7 +114,10 @@ public final class EndToEnd {
             }
             double p1 = branch.getTerminal1().getP();
             double limit = Double.isNaN(p1) ? 500.0 : Math.max(50.0, 0.85 * Math.abs(p1));
+            // binding active-power (MW) limit for DC, plus a large non-binding current (A) limit so the CRAC's
+            // FlowCNECs carry a current-limit basis and survive the JSON round-trip FastRao/MARMOT performs
             branch.newActivePowerLimits1().setPermanentLimit(limit).add();
+            branch.newCurrentLimits1().setPermanentLimit(100000.0).add();
             added++;
         }
         System.out.printf("Added synthetic active-power limits to %d monitored branches%n", added);
@@ -130,6 +148,9 @@ public final class EndToEnd {
                 && instant.isPreventive() && genSet.contains(injection.getId()));
         p.getRedispatchingRangeActions().setRaRangeProvider(
             (injection, instant) -> new MinAndMax<>(-REDISPATCH_RANGE_MW, REDISPATCH_RANGE_MW));
+        // non-zero variation cost so MIN_COST (MARMOT) has a meaningful objective; ignored by MAX_MIN_MARGIN (CASTOR)
+        p.getRedispatchingRangeActions().setRaCostsProvider(
+            (injection, instant) -> new InjectionRangeActionCosts(0.0, 1.0, 1.0));
 
         NetworkCracCreationContext ctx = NetworkCracCreator.createCrac(network, ccp);
         Crac crac = ctx.getCrac();
@@ -169,5 +190,85 @@ public final class EndToEnd {
         RaoResult result = Rao.find("SearchTreeRao").run(raoInput, params, ReportNode.NO_OP);
         double sec = (System.nanoTime() - t1) / 1e9;
         System.out.printf("CASTOR RAO: status=%s, %.2f s%n", result.getComputationStatus(), sec);
+    }
+
+    static RaoParameters loadMinCostParameters() {
+        try (InputStream is = EndToEnd.class.getResourceAsStream("/RaoParameters_minCost_dc_shallow.json")) {
+            return JsonRaoParameters.read(is, ReportNode.NO_OP);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * MARMOT parallelism A/B: run the time-coupled RAO over N timestamps at parallelism 1 vs 3 and compare wall-clock.
+     * Each timestamp is an independent copy of the (limit-augmented) PEGASE network with a distinct case date, plus a
+     * small CRAC; a generator power-gradient constraint couples the timestamps and forces the global time-coupled MIP
+     * (whose per-timestamp sensitivity loop is the parallelized path, Tier 1.1).
+     */
+    static final int DEFAULT_MARMOT_TIMESTAMPS = 6;
+
+    static void runMarmot(String[] args) {
+        int nTimestamps = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_MARMOT_TIMESTAMPS;
+        // keep the per-timestamp CRAC small so MARMOT's per-timestamp RAOs and MIP sensitivities are fast
+        nContingencies = 1;
+        nMonitored = 30;
+        nRedispatch = 6;
+        System.out.printf("MARMOT A/B: %d timestamps, per-TS CRAC nContingencies=%d nMonitored=%d nRedispatch=%d%n",
+            nTimestamps, nContingencies, nMonitored, nRedispatch);
+
+        Network base = Network.read(Path.of("cases", "case13659pegase.xiidm"));
+        Subsets subsets = pickSubsets(base);
+        addSyntheticLimits(base, subsets.monitoredBranches());
+        String gradientGenerator = subsets.generatorIds().stream().sorted().findFirst().orElseThrow();
+        System.out.println("Gradient generator: " + gradientGenerator);
+
+        // write N network files with distinct case dates (so each synthesized CRAC gets a distinct timestamp)
+        ZonedDateTime baseDate = base.getCaseDate();
+        List<OffsetDateTime> timestamps = new ArrayList<>();
+        List<Path> paths = new ArrayList<>();
+        for (int t = 0; t < nTimestamps; t++) {
+            ZonedDateTime date = baseDate.plusHours(t);
+            base.setCaseDate(date);
+            Path p = Path.of("cases", "pegase_ts" + t + ".xiidm");
+            base.write("XIIDM", new Properties(), p);
+            timestamps.add(date.toOffsetDateTime());
+            paths.add(p);
+        }
+
+        TimeCoupledConstraints tcc = new TimeCoupledConstraints();
+        tcc.addGeneratorConstraints(GeneratorConstraints.create()
+            .withGeneratorId(gradientGenerator)
+            .withLeadTime(0.0).withLagTime(0.0)
+            .withUpwardPowerGradient(50.0).withDownwardPowerGradient(-50.0)
+            .build());
+
+        Map<Integer, Double> timings = new LinkedHashMap<>();
+        for (int threads : new int[] {1, 3}) {
+            TemporalData<RaoInput> inputs = new TemporalDataImpl<>();
+            for (int t = 0; t < nTimestamps; t++) {
+                Network n = Network.read(paths.get(t));
+                Crac crac = synthesizeCrac(n, subsets);
+                inputs.put(timestamps.get(t), RaoInput.build(LazyNetwork.of(paths.get(t).toString()), crac).build());
+            }
+            RaoParameters params = loadMinCostParameters();
+            MarmotParameters mp = new MarmotParameters();
+            mp.setNumberOfThreads(threads);
+            mp.setMaxMipIterations(3);
+            params.addExtension(MarmotParameters.class, mp);
+
+            long t0 = System.nanoTime();
+            TimeCoupledRaoResult result = new Marmot().run(new TimeCoupledRaoInput(inputs, tcc), params, ReportNode.NO_OP).join();
+            double sec = (System.nanoTime() - t0) / 1e9;
+            timings.put(threads, sec);
+            System.out.printf(">>> MARMOT threads=%d: %.2f s (result=%s)%n", threads, sec, result != null ? "ok" : "null");
+        }
+
+        double seq = timings.get(1);
+        double par = timings.get(3);
+        System.out.printf("%n=== MARMOT parallelism A/B (%d timestamps) ===%n", nTimestamps);
+        System.out.printf("threads=1: %.2f s%n", seq);
+        System.out.printf("threads=3: %.2f s%n", par);
+        System.out.printf("speedup: %.2fx%n", seq / par);
     }
 }

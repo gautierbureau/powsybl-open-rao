@@ -50,6 +50,12 @@ java -Xmx8g -jar target/bench.jar castor [nContingencies] [nMonitored] [nRedispa
 ```
 The three optional knobs size the synthesized CRAC; the defaults (`40 800 70`) land at ~1 min.
 
+Run the MARMOT parallelism A/B (Tier 1.1) on PEGASE (requires the XIIDM cache from `prepare`):
+```
+java -Xmx8g -jar target/bench.jar marmot [nTimestamps]
+```
+Runs the time-coupled RAO at parallelism 1 then 3 over N timestamps (default 6) and prints the speedup.
+
 ## End-to-end runs (tractable in 1-2 min)
 
 `castor` synthesizes a bounded CRAC on the 13 659-bus PEGASE network and runs one full CASTOR RAO.
@@ -69,9 +75,24 @@ Runtime is driven by `#CNECs x #range-actions` and the number of contingency per
 sensitivity getters, the LP variable/constraint maps, and `CracImpl` per-state queries), but a full
 RAO's wall-clock is dominated by the OpenLoadFlow sensitivity *solve* — which the Tier 3/4 changes do
 not touch. So the end-to-end delta from those changes sits within solver variance; the **JMH
-micro-benchmarks above are the precise measurement** of their effect. The end-to-end run is the
-right place to measure the **MARMOT parallelization** (Tier 1.1), whose speedup is multiplicative in
-timestamps x cores — a `marmot` A/B (parallelism 1 vs N) is the recommended next addition.
+micro-benchmarks above are the precise measurement** of their effect.
+
+### MARMOT parallelism A/B (Tier 1.1)
+
+`marmot` runs the time-coupled RAO over N independent-timestamp copies of the PEGASE network (each a
+small CRAC, coupled by a generator power-gradient constraint that forces the global time-coupled MIP)
+at parallelism 1 then 3, and reports the wall-clock speedup. Both runs produce identical results
+(same objective cost), confirming the parallelization does not change the outcome. Measured:
+
+| Timestamps | threads=1 | threads=3 | Speedup |
+|---:|---:|---:|---:|
+| 4 | 37.8 s | 23.2 s | 1.63x |
+| **6** (default) | **54.2 s** | **31.2 s** | **1.74x** |
+
+Unlike the Tier 3/4 changes, this is a genuine end-to-end wall-clock win: the parallelized work
+(the per-timestamp topological RAOs and the global-MIP per-timestamp sensitivity loop, the latter
+being the Tier 1.1 change) scales with `timestamps x cores`, bounded by MARMOT's sequential portions
+(initial sensitivity, the single global MIP solve).
 
 ## What the micro-benchmarks measure
 

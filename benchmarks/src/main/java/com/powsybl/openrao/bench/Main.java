@@ -35,6 +35,11 @@ public final class Main {
             return;
         }
 
+        if ("marmot".equals(mode)) {
+            EndToEnd.runMarmot(args);
+            return;
+        }
+
         Path dir = Path.of("cases");
         Path mFile = dir.resolve("case13659pegase.m");
         Path matFile = dir.resolve("case13659pegase.mat");
