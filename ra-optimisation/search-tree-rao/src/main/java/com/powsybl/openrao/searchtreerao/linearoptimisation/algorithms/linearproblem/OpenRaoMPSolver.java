@@ -15,9 +15,9 @@ import com.powsybl.openrao.commons.logs.OpenRaoLoggerProvider;
 import com.powsybl.openrao.raoapi.parameters.extensions.SearchTreeRaoRangeActionsOptimizationParameters;
 import com.powsybl.openrao.searchtreerao.result.api.LinearProblemStatus;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * Encapsulates OR-Tools' MPSolver objects in order to round up doubles
@@ -47,8 +47,9 @@ public class OpenRaoMPSolver {
     private MPSolver mpSolver;
     private final MPSolverParameters solveConfiguration;
     private String solverSpecificParameters;
-    Map<String, OpenRaoMPConstraint> constraints = new TreeMap<>();
-    Map<String, OpenRaoMPVariable> variables = new TreeMap<>();
+    // only used for name-based lookups: no need for ordering, and hash lookups are cheaper on the long variable/constraint names
+    Map<String, OpenRaoMPConstraint> constraints = new HashMap<>();
+    Map<String, OpenRaoMPVariable> variables = new HashMap<>();
     OpenRaoMPObjective objective;
     private boolean objectiveMinimization = true;
 
@@ -61,8 +62,8 @@ public class OpenRaoMPSolver {
 
     public void resetModel() {
         this.mpSolver = new MPSolver(optProblemName, getOrToolsProblemType(solver));
-        constraints = new TreeMap<>();
-        variables = new TreeMap<>();
+        constraints = new HashMap<>();
+        variables = new HashMap<>();
         this.objective = new OpenRaoMPObjective(mpSolver.objective());
         setSolverSpecificParametersAsString(solverSpecificParameters);
         if (objectiveMinimization) {
@@ -96,11 +97,11 @@ public class OpenRaoMPSolver {
     }
 
     public OpenRaoMPConstraint getConstraint(String name) {
-        if (hasConstraint(name)) {
-            return constraints.get(name);
-        } else {
+        OpenRaoMPConstraint constraint = constraints.get(name);
+        if (constraint == null) {
             throw new OpenRaoException(String.format("Constraint %s has not been created yet", name));
         }
+        return constraint;
     }
 
     public boolean hasVariable(String name) {
@@ -108,11 +109,11 @@ public class OpenRaoMPSolver {
     }
 
     public OpenRaoMPVariable getVariable(String name) {
-        if (hasVariable(name)) {
-            return variables.get(name);
-        } else {
+        OpenRaoMPVariable variable = variables.get(name);
+        if (variable == null) {
             throw new OpenRaoException(String.format("Variable %s has not been created yet", name));
         }
+        return variable;
     }
 
     public OpenRaoMPObjective getObjective() {

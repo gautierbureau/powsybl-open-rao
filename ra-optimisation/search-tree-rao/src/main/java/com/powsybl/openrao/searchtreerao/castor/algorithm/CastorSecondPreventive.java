@@ -204,9 +204,15 @@ public class CastorSecondPreventive {
                 entry.getValue().optimizationResult().getActivatedRangeActions(entry.getKey()).forEach(rangeAction -> appliedArasAndCras
                     .addAppliedRangeAction(entry.getKey(), rangeAction, entry.getValue().optimizationResult().getOptimizedSetpoint(rangeAction, entry.getKey())));
             });
-        // Run curative sensitivity analysis with appliedArasAndCras
-        // TODO: this is too slow, we can replace it with load-flow computations or security analysis since we don't need sensitivity values
-        PrePerimeterResult postCraSensitivityAnalysisOutput = prePerimeterSensitivityAnalysis.runBasedOnInitialResults(network, initialOutput, Collections.emptySet(), appliedArasAndCras, secondPreventiveReportNode);
+        // Run curative sensitivity analysis with appliedArasAndCras.
+        // We only need flows/margins (and PTDFs) here, not range-action sensitivities: this post-CRA result feeds the
+        // final RaoResult, whose flows/margins/costs come from the flow result and objective function and whose
+        // range-action set-points come from the optimization results - never from these range-action sensitivities.
+        // So use a flow-only analysis (empty range-action set) to skip computing the range-action sensitivity factors,
+        // which is the expensive part; PTDFs for relative margins / loop-flows are unaffected.
+        PrePerimeterSensitivityAnalysis postCraFlowOnlyAnalysis = new PrePerimeterSensitivityAnalysis(
+            crac, crac.getFlowCnecs(), Collections.emptySet(), raoParameters, toolProvider, true);
+        PrePerimeterResult postCraSensitivityAnalysisOutput = postCraFlowOnlyAnalysis.runBasedOnInitialResults(network, initialOutput, Collections.emptySet(), appliedArasAndCras, secondPreventiveReportNode);
         if (postCraSensitivityAnalysisOutput.getSensitivityStatus() == ComputationStatus.FAILURE) {
             CastorReports.reportSystematicSensitivityAnalysisAfterCraAfterSecondPreventiveFailed(secondPreventiveReportNode);
             return SecondPreventiveRaoResultsHolder.failed("Systematic sensitivity analysis after curative remedial actions after second preventive optimization failed");

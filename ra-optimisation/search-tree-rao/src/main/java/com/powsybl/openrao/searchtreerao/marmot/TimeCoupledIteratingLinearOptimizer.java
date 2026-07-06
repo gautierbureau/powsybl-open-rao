@@ -147,30 +147,36 @@ public final class TimeCoupledIteratingLinearOptimizer {
                 return bestResult;
             }
 
-            // e.  Run sensitivity analyses with new set-points -> TODO: multi-thread
-            Map<OffsetDateTime, SensitivityComputer> newSensitivityComputers = new HashMap<>();
-            for (OffsetDateTime timestamp : rangeActionActivationPerTimestamp.getTimestamps()) {
-                IteratingLinearOptimizerInput inputForTimestamp = input.iteratingLinearOptimizerInputs().getData(timestamp).orElseThrow();
-                newSensitivityComputers.put(
-                    timestamp,
-                    runSensitivityAnalysis(
-                        sensitivityComputers.getData(timestamp).orElse(null),
-                        iteration,
-                        rangeActionActivationPerTimestamp.getData(timestamp).orElseThrow(),
+            // e. Run sensitivity analyses with new set-points. Each timestamp's analysis is independent (own network,
+            // own SensitivityComputer), so they are run in parallel when parallelism > 1 (reusing the smartMap pattern
+            // already used for the other per-timestamp sensitivity analyses in Marmot).
+            final int iterationForSensi = iteration;
+            final TemporalData<SensitivityComputer> previousSensitivityComputers = sensitivityComputers;
+            final TemporalData<RangeActionActivationResult> rangeActionActivationForSensi = rangeActionActivationPerTimestamp;
+            TemporalData<SensitivityComputer> newSensitivityComputers = MarmotUtils.smartMap(
+                input.iteratingLinearOptimizerInputs(),
+                inputForTimestamp -> {
+                    OffsetDateTime timestamp = inputForTimestamp.optimizationPerimeter().getMainOptimizationState().getTimestamp().orElseThrow();
+                    SensitivityComputer newSensitivityComputer = runSensitivityAnalysis(
+                        previousSensitivityComputers.getData(timestamp).orElse(null),
+                        iterationForSensi,
+                        rangeActionActivationForSensi.getData(timestamp).orElseThrow(),
                         inputForTimestamp,
                         parameters,
                         reportNode
-                    )
-                );
-                MarmotUtils.releaseNetwork(inputForTimestamp.network());
-            }
+                    );
+                    MarmotUtils.releaseNetwork(inputForTimestamp.network());
+                    return newSensitivityComputer;
+                },
+                parallelism
+            );
 
-            if (newSensitivityComputers.values().stream().anyMatch(sensitivityComputer -> sensitivityComputer.getSensitivityResult().getSensitivityStatus() == ComputationStatus.FAILURE)) {
+            if (newSensitivityComputers.getDataPerTimestamp().values().stream().anyMatch(sensitivityComputer -> sensitivityComputer.getSensitivityResult().getSensitivityStatus() == ComputationStatus.FAILURE)) {
                 bestResult.setStatus(LinearProblemStatus.SENSITIVITY_COMPUTATION_FAILED);
                 return bestResult;
             }
 
-            sensitivityComputers = new TemporalDataImpl<>(newSensitivityComputers);
+            sensitivityComputers = newSensitivityComputers;
 
             GlobalLinearOptimizationResult newResult = createResultFromData(
                 sensitivityComputers,

@@ -37,6 +37,9 @@ public class RangeActionActivationResultImpl implements RangeActionActivationRes
 
     private Map<String, Map<State, Double>> setpointPerStatePerPstId;
     private Map<State, Optional<State>> memoizedPreviousState = new HashMap<>();
+    // the concatenated network-element ids depend only on the (immutable) range action; getOptimizedSetpoint
+    // recomputes them per (rangeAction, state) call in the hottest loops, so cache them
+    private final Map<RangeAction<?>, String> concatenatedNeIdsCache = new HashMap<>();
 
     private static final class ElementaryResult {
         private final double refSetpoint;
@@ -117,7 +120,8 @@ public class RangeActionActivationResultImpl implements RangeActionActivationRes
     }
 
     private String concatenateNetworkElementsIds(RangeAction<?> rangeAction) {
-        return rangeAction.getNetworkElements().stream().map(Identifiable::getId).sorted().collect(Collectors.joining("+"));
+        return concatenatedNeIdsCache.computeIfAbsent(rangeAction,
+            ra -> ra.getNetworkElements().stream().map(Identifiable::getId).sorted().collect(Collectors.joining("+")));
     }
 
     @Override
@@ -159,8 +163,8 @@ public class RangeActionActivationResultImpl implements RangeActionActivationRes
         String networkElementsIds = concatenateNetworkElementsIds(rangeAction);
         // if at least one elementary result is on the correct network elements, find the right state to get the setpoint
         // else return the reference setpoint
-        if (setpointPerStatePerPstId.containsKey(networkElementsIds)) {
-            Map<State, Double> setPointPerState = setpointPerStatePerPstId.get(networkElementsIds);
+        Map<State, Double> setPointPerState = setpointPerStatePerPstId.get(networkElementsIds);
+        if (setPointPerState != null) {
             // if an elementary result is defined for the network element and state, return it
             // else find a previous state with an elementary result
             // if none are found, return reference setpoint
@@ -176,8 +180,9 @@ public class RangeActionActivationResultImpl implements RangeActionActivationRes
     }
 
     private Double getSetpointForState(Map<State, Double> setPointPerState, State state) {
-        if (setPointPerState.containsKey(state)) {
-            return setPointPerState.get(state);
+        Double setpoint = setPointPerState.get(state);
+        if (setpoint != null) {
+            return setpoint;
         }
         Optional<State> previousState = getPreviousState(state);
         // setPointPerState does not contain a setpoint for any of state's previous states

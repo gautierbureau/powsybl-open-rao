@@ -73,6 +73,14 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
     private final Map<String, FlowCnec> flowCnecs = new HashMap<>();
     private final Map<String, AngleCnec> angleCnecs = new HashMap<>();
     private final Map<String, VoltageCnec> voltageCnecs = new HashMap<>();
+    // secondary indexes for per-state and per-instant queries, which are called repeatedly by the RAO.
+    // These associations are immutable (a CNEC's state and a state's instant/contingency are set at creation),
+    // so the indexes only need to be maintained on add/remove.
+    private final Map<Instant, Set<State>> statesPerInstant = new HashMap<>();
+    private final Map<String, SortedSet<State>> statesPerContingencyId = new HashMap<>();
+    private final Map<State, Set<FlowCnec>> flowCnecsPerState = new HashMap<>();
+    private final Map<State, Set<AngleCnec>> angleCnecsPerState = new HashMap<>();
+    private final Map<State, Set<VoltageCnec>> voltageCnecsPerState = new HashMap<>();
     private final Map<String, PstRangeAction> pstRangeActions = new HashMap<>();
     private final Map<String, HvdcRangeAction> hvdcRangeActions = new HashMap<>();
     private final Map<String, InjectionRangeAction> injectionRangeActions = new HashMap<>();
@@ -372,16 +380,14 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
     @Override
     public SortedSet<State> getStates(Contingency contingency) {
         Objects.requireNonNull(contingency, "Contingency must not be null when getting states.");
-        return states.values().stream()
-            .filter(state -> state.getContingency().isPresent() && state.getContingency().get().getId().equals(contingency.getId()))
-            .collect(Collectors.toCollection(TreeSet::new));
+        SortedSet<State> contingencyStates = statesPerContingencyId.get(contingency.getId());
+        return contingencyStates == null ? new TreeSet<>() : new TreeSet<>(contingencyStates);
     }
 
     @Override
     public Set<State> getStates(Instant instant) {
-        return states.values().stream()
-            .filter(state -> state.getInstant().equals(instant))
-            .collect(Collectors.toSet());
+        Set<State> instantStates = statesPerInstant.get(instant);
+        return instantStates == null ? new HashSet<>() : new HashSet<>(instantStates);
     }
 
     @Override
@@ -396,6 +402,7 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
         } else {
             State state = new PreventiveState(getPreventiveInstant(), timestamp);
             states.put(state.getId(), state);
+            indexState(state);
             return state;
         }
     }
@@ -413,8 +420,28 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
             }
             State state = new PostContingencyState(getContingency(contingency.getId()), instant, timestamp);
             states.put(state.getId(), state);
+            indexState(state);
             return state;
         }
+    }
+
+    private void indexState(State state) {
+        statesPerInstant.computeIfAbsent(state.getInstant(), k -> new HashSet<>()).add(state);
+        state.getContingency().ifPresent(contingency ->
+            statesPerContingencyId.computeIfAbsent(contingency.getId(), k -> new TreeSet<>()).add(state));
+    }
+
+    private void unindexState(State state) {
+        Set<State> instantStates = statesPerInstant.get(state.getInstant());
+        if (instantStates != null) {
+            instantStates.remove(state);
+        }
+        state.getContingency().ifPresent(contingency -> {
+            SortedSet<State> contingencyStates = statesPerContingencyId.get(contingency.getId());
+            if (contingencyStates != null) {
+                contingencyStates.remove(state);
+            }
+        });
     }
 
     /**
@@ -427,7 +454,12 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
         Set<String> referencedStateIds = getReferencedStateIds();
         stateIds.stream()
             .filter(stateId -> !referencedStateIds.contains(stateId))
-            .forEach(states::remove);
+            .forEach(stateId -> {
+                State removedState = states.remove(stateId);
+                if (removedState != null) {
+                    unindexState(removedState);
+                }
+            });
     }
 
     /**
@@ -564,9 +596,8 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
 
     @Override
     public Set<FlowCnec> getFlowCnecs(State state) {
-        return flowCnecs.values().stream()
-            .filter(cnec -> cnec.getState().equals(state))
-            .collect(Collectors.toSet());
+        Set<FlowCnec> stateFlowCnecs = flowCnecsPerState.get(state);
+        return stateFlowCnecs == null ? new HashSet<>() : new HashSet<>(stateFlowCnecs);
     }
 
     @Override
@@ -581,9 +612,8 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
 
     @Override
     public Set<AngleCnec> getAngleCnecs(State state) {
-        return angleCnecs.values().stream()
-            .filter(cnec -> cnec.getState().equals(state))
-            .collect(Collectors.toSet());
+        Set<AngleCnec> stateAngleCnecs = angleCnecsPerState.get(state);
+        return stateAngleCnecs == null ? new HashSet<>() : new HashSet<>(stateAngleCnecs);
     }
 
     @Override
@@ -598,9 +628,8 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
 
     @Override
     public Set<VoltageCnec> getVoltageCnecs(State state) {
-        return voltageCnecs.values().stream()
-            .filter(cnec -> cnec.getState().equals(state))
-            .collect(Collectors.toSet());
+        Set<VoltageCnec> stateVoltageCnecs = voltageCnecsPerState.get(state);
+        return stateVoltageCnecs == null ? new HashSet<>() : new HashSet<>(stateVoltageCnecs);
     }
 
     @Override
@@ -620,9 +649,10 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
         Set<FlowCnec> flowCnecsToRemove = flowCnecsIds.stream().map(flowCnecs::get).filter(Objects::nonNull).collect(Collectors.toSet());
         Set<String> networkElementsToRemove = flowCnecsToRemove.stream().map(cnec -> cnec.getNetworkElement().getId()).collect(Collectors.toSet());
         Set<String> statesToRemove = flowCnecsToRemove.stream().map(Cnec::getState).map(State::getId).collect(Collectors.toSet());
-        flowCnecsToRemove.forEach(flowCnecToRemove ->
-            flowCnecs.remove(flowCnecToRemove.getId())
-        );
+        flowCnecsToRemove.forEach(flowCnecToRemove -> {
+            flowCnecs.remove(flowCnecToRemove.getId());
+            removeFromPerStateIndex(flowCnecsPerState, flowCnecToRemove);
+        });
         safeRemoveNetworkElements(networkElementsToRemove);
         safeRemoveStates(statesToRemove);
     }
@@ -638,9 +668,10 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
         Set<String> networkElementsToRemove = angleCnecsToRemove.stream().map(Cnec::getNetworkElements)
             .flatMap(Set::stream).map(Identifiable::getId).collect(Collectors.toSet());
         Set<String> statesToRemove = angleCnecsToRemove.stream().map(Cnec::getState).map(State::getId).collect(Collectors.toSet());
-        angleCnecsToRemove.forEach(angleCnecToRemove ->
-            angleCnecs.remove(angleCnecToRemove.getId())
-        );
+        angleCnecsToRemove.forEach(angleCnecToRemove -> {
+            angleCnecs.remove(angleCnecToRemove.getId());
+            removeFromPerStateIndex(angleCnecsPerState, angleCnecToRemove);
+        });
         safeRemoveNetworkElements(networkElementsToRemove);
         safeRemoveStates(statesToRemove);
     }
@@ -655,23 +686,34 @@ public class CracImpl extends AbstractIdentifiable<Crac> implements Crac {
         Set<VoltageCnec> voltageCnecsToRemove = voltageCnecsIds.stream().map(voltageCnecs::get).filter(Objects::nonNull).collect(Collectors.toSet());
         Set<String> networkElementsToRemove = voltageCnecsToRemove.stream().map(cnec -> cnec.getNetworkElement().getId()).collect(Collectors.toSet());
         Set<String> statesToRemove = voltageCnecsToRemove.stream().map(Cnec::getState).map(State::getId).collect(Collectors.toSet());
-        voltageCnecsToRemove.forEach(voltageCnecToRemove ->
-            voltageCnecs.remove(voltageCnecToRemove.getId())
-        );
+        voltageCnecsToRemove.forEach(voltageCnecToRemove -> {
+            voltageCnecs.remove(voltageCnecToRemove.getId());
+            removeFromPerStateIndex(voltageCnecsPerState, voltageCnecToRemove);
+        });
         safeRemoveNetworkElements(networkElementsToRemove);
         safeRemoveStates(statesToRemove);
     }
 
+    private static <T extends Cnec<?>> void removeFromPerStateIndex(Map<State, Set<T>> cnecsPerState, T cnec) {
+        Set<T> stateCnecs = cnecsPerState.get(cnec.getState());
+        if (stateCnecs != null) {
+            stateCnecs.remove(cnec);
+        }
+    }
+
     void addFlowCnec(FlowCnec flowCnec) {
         flowCnecs.put(flowCnec.getId(), flowCnec);
+        flowCnecsPerState.computeIfAbsent(flowCnec.getState(), k -> new HashSet<>()).add(flowCnec);
     }
 
     void addAngleCnec(AngleCnec angleCnec) {
         angleCnecs.put(angleCnec.getId(), angleCnec);
+        angleCnecsPerState.computeIfAbsent(angleCnec.getState(), k -> new HashSet<>()).add(angleCnec);
     }
 
     void addVoltageCnec(VoltageCnec voltageCnec) {
         voltageCnecs.put(voltageCnec.getId(), voltageCnec);
+        voltageCnecsPerState.computeIfAbsent(voltageCnec.getState(), k -> new HashSet<>()).add(voltageCnec);
     }
 
     // endregion
